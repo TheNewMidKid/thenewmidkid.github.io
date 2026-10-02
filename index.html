@@ -14,5 +14,27 @@
 
 	<body class="light-mode">
 		<div id="app"></div>
+
+		<script>
+			async function requestFullscreenAndKeyLock() {
+				try {
+					// Request fullscreen on the document root element
+					if (!document.fullscreenElement) {
+						await document.documentElement.requestFullscreen();
+					}
+
+					// Request Keyboard Lock (supported in Chromium-based browsers)
+					if ('keyboard' in navigator && 'lock' in navigator.keyboard) {
+						await navigator.keyboard.lock();
+					}
+				} catch (err) {
+					console.warn('Fullscreen or Keyboard Lock request failed:', err);
+				}
+			}
+
+			// User interaction triggers needed due to browser security policies
+			window.addEventListener('click', requestFullscreenAndKeyLock, { once: true });
+			window.addEventListener('keydown', requestFullscreenAndKeyLock, { once: true });
+		</script>
 	</body>
 </html>
