@@ -2,9 +2,9 @@
 
 A Scramjet demo page hosted on GitHub Pages, because why not?
 
-## Latest update — November 13, 2026
+## Latest update — November 19, 2026
 
-This demo has been updated to **libcurl.js 0.7.5** for a smoother browsing experience.
+This demo has been updated to the latest scramjet version.
 
 ## Update policy
 
