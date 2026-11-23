@@ -6,10 +6,276 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Scramjet Demo</title>
 
+		<script>
+			(() => {
+				const LOG_STORAGE_KEY = "midkid_console_logs_v1";
+				const TOGGLE_STORAGE_KEY = "midkid_console_enabled_v1";
+				const MAX_ENTRIES = 500;
+				const LEVELS = ["log", "info", "warn", "error", "debug"];
+
+				let entries = [];
+				try {
+					const raw = localStorage.getItem(LOG_STORAGE_KEY);
+					const parsed = raw ? JSON.parse(raw) : [];
+					if (Array.isArray(parsed)) entries = parsed;
+				} catch (_) {
+					entries = [];
+				}
+
+				let enabled = localStorage.getItem(TOGGLE_STORAGE_KEY) === "true";
+				let activeFilter = "all";
+
+				function persistLogs() {
+					try {
+						localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(entries.slice(-MAX_ENTRIES)));
+					} catch (_) {
+						entries = entries.slice(-Math.floor(MAX_ENTRIES / 2));
+						try {
+							localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(entries));
+						} catch (_) {}
+					}
+				}
+
+				function formatValue(val) {
+					if (val instanceof Error) {
+						return `${val.name}: ${val.message}${val.stack ? `\n${val.stack}` : ""}`;
+					}
+					if (typeof val === "object" && val !== null) {
+						try {
+							return JSON.stringify(val, null, 2);
+						} catch (_) {
+							return String(val);
+						}
+					}
+					return String(val);
+				}
+
+				function pushEntry(level, args) {
+					const text = Array.from(args).map(formatValue).join(" ");
+					entries.push({
+						ts: new Date().toLocaleTimeString(),
+						level,
+						text
+					});
+					if (entries.length > MAX_ENTRIES) {
+						entries = entries.slice(-MAX_ENTRIES);
+					}
+					persistLogs();
+					render();
+				}
+
+				LEVELS.forEach((lvl) => {
+					const original = typeof console[lvl] === "function" ? console[lvl].bind(console) : null;
+					console[lvl] = (...args) => {
+						pushEntry(lvl, args);
+						if (original) original(...args);
+					};
+				});
+
+				window.addEventListener("error", (event) => {
+					const msg = event.error
+						? formatValue(event.error)
+						: `${event.message || "Error"} (${event.filename || "unknown"}:${event.lineno || 0}:${event.colno || 0})`;
+					pushEntry("error", [msg]);
+				});
+
+				window.addEventListener("unhandledrejection", (event) => {
+					pushEntry("error", ["Unhandled Rejection:", event.reason]);
+				});
+
+				function escapeHtml(str) {
+					return str
+						.replace(/&/g, "&amp;")
+						.replace(/</g, "&lt;")
+						.replace(/>/g, "&gt;");
+				}
+
+				const colors = {
+					log: "#e5e7eb",
+					info: "#60a5fa",
+					warn: "#fbbf24",
+					error: "#f87171",
+					debug: "#9ca3af"
+				};
+
+				let listEl = null;
+				let countEl = null;
+				let panelEl = null;
+				let settingsModalEl = null;
+				let settingsSwitchEl = null;
+
+				function render() {
+					if (!listEl || !countEl) return;
+					const filtered = activeFilter === "all"
+						? entries
+						: entries.filter((e) => e.level === activeFilter);
+
+					countEl.textContent = `${filtered.length}/${entries.length} saved`;
+
+					const nearBottom =
+						listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 28;
+
+					listEl.innerHTML = filtered
+						.map((item) => {
+							const c = colors[item.level] || "#e5e7eb";
+							return `<div style="padding:5px 2px;border-bottom:1px solid rgba(255,255,255,0.06);">
+								<span style="color:#9ca3af;">[${escapeHtml(item.ts)}]</span>
+								<span style="color:${c};font-weight:700;text-transform:uppercase;">[${escapeHtml(item.level)}]</span>
+								<span style="color:${c};">${escapeHtml(item.text)}</span>
+							</div>`;
+						})
+						.join("");
+
+					if (nearBottom) {
+						listEl.scrollTop = listEl.scrollHeight;
+					}
+				}
+
+				function setConsoleEnabled(next) {
+					enabled = Boolean(next);
+					try {
+						localStorage.setItem(TOGGLE_STORAGE_KEY, String(enabled));
+					} catch (_) {}
+					if (settingsSwitchEl) settingsSwitchEl.checked = enabled;
+					if (panelEl) panelEl.style.display = enabled ? "flex" : "none";
+					if (enabled) render();
+				}
+
+				function setSettingsOpen(open) {
+					if (!settingsModalEl) return;
+					settingsModalEl.style.display = open ? "block" : "none";
+					if (settingsSwitchEl) settingsSwitchEl.checked = enabled;
+				}
+
+				window.setDebugConsoleEnabled = setConsoleEnabled;
+				window.toggleDebugConsole = () => setConsoleEnabled(!enabled);
+				window.isDebugConsoleEnabled = () => enabled;
+				window.getSavedConsoleLogs = () => entries.slice();
+
+				function mountUI() {
+					if (document.getElementById("midkid-console-root")) return;
+					const root = document.createElement("div");
+					root.id = "midkid-console-root";
+
+					root.innerHTML = `
+						<button id="midkid-settings-btn" type="button" title="Console Settings"
+							style="position:fixed;left:12px;bottom:12px;z-index:2147483646;padding:6px 10px;
+							background:#18181b;color:#f4f4f5;border:1px solid #3f3f46;border-radius:6px;
+							font:600 12px/1.2 system-ui,sans-serif;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.4);">
+							Settings
+						</button>
+
+						<div id="midkid-settings-modal"
+							style="display:none;position:fixed;left:12px;bottom:48px;z-index:2147483647;
+							width:260px;background:#18181b;color:#f4f4f5;border:1px solid #3f3f46;
+							border-radius:8px;padding:12px;font:12px/1.4 system-ui,sans-serif;
+							box-shadow:0 10px 28px rgba(0,0,0,0.55);">
+							<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+								<strong>Settings</strong>
+								<button id="midkid-settings-close" type="button"
+									style="background:none;border:none;color:#a1a1aa;cursor:pointer;font-size:14px;">✕</button>
+							</div>
+							<label style="display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;">
+								<span>On-Screen Console</span>
+								<input id="midkid-console-switch" type="checkbox" style="cursor:pointer;" />
+							</label>
+							<div style="margin-top:8px;color:#a1a1aa;font-size:11px;">
+								Captures log, info, warn, error, debug &amp; uncaught errors. Saved in localStorage.
+							</div>
+						</div>
+
+						<div id="midkid-console-panel"
+							style="display:${enabled ? "flex" : "none"};position:fixed;right:12px;bottom:12px;
+							width:min(540px,calc(100vw - 24px));height:300px;z-index:2147483647;
+							flex-direction:column;background:#0f1115;color:#e5e7eb;border:1px solid #2e3440;
+							border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+							font-size:12px;box-shadow:0 10px 30px rgba(0,0,0,0.55);">
+							<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+								gap:6px;padding:6px 10px;background:#161920;border-bottom:1px solid #2e3440;">
+								<div style="display:flex;align-items:center;gap:8px;">
+									<strong>Console</strong>
+									<span id="midkid-console-count" style="color:#9ca3af;font-size:11px;"></span>
+								</div>
+								<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;">
+									<select id="midkid-console-filter"
+										style="background:#222733;color:#e5e7eb;border:1px solid #384052;
+										border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;">
+										<option value="all">All</option>
+										<option value="error">Errors</option>
+										<option value="warn">Warnings</option>
+										<option value="info">Info</option>
+										<option value="log">Logs</option>
+										<option value="debug">Debug</option>
+									</select>
+									<button id="midkid-console-clear" type="button"
+										style="background:#222733;color:#e5e7eb;border:1px solid #384052;
+										border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;">Clear</button>
+									<button id="midkid-console-off" type="button"
+										style="background:#222733;color:#e5e7eb;border:1px solid #384052;
+										border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer;">Disable</button>
+								</div>
+							</div>
+							<div id="midkid-console-list"
+								style="flex:1;min-height:0;overflow-y:auto;padding:8px 10px;
+								white-space:pre-wrap;word-break:break-word;"></div>
+						</div>
+					`;
+
+					document.body.appendChild(root);
+
+					panelEl = document.getElementById("midkid-console-panel");
+					listEl = document.getElementById("midkid-console-list");
+					countEl = document.getElementById("midkid-console-count");
+					settingsModalEl = document.getElementById("midkid-settings-modal");
+					settingsSwitchEl = document.getElementById("midkid-console-switch");
+
+					if (settingsSwitchEl) settingsSwitchEl.checked = enabled;
+
+					document.getElementById("midkid-settings-btn").addEventListener("click", () => {
+						const isShown = settingsModalEl.style.display === "block";
+						setSettingsOpen(!isShown);
+					});
+
+					document.getElementById("midkid-settings-close").addEventListener("click", () => {
+						setSettingsOpen(false);
+					});
+
+					settingsSwitchEl.addEventListener("change", (e) => {
+						setConsoleEnabled(e.target.checked);
+					});
+
+					document.getElementById("midkid-console-filter").addEventListener("change", (e) => {
+						activeFilter = e.target.value;
+						render();
+					});
+
+					document.getElementById("midkid-console-clear").addEventListener("click", () => {
+						entries = [];
+						try {
+							localStorage.removeItem(LOG_STORAGE_KEY);
+						} catch (_) {}
+						render();
+					});
+
+					document.getElementById("midkid-console-off").addEventListener("click", () => {
+						setConsoleEnabled(false);
+					});
+
+					render();
+				}
+
+				if (document.readyState === "loading") {
+					document.addEventListener("DOMContentLoaded", mountUI, { once: true });
+				} else {
+					mountUI();
+				}
+			})();
+		</script>
+
 		<script src="/scramjet/scramjet.js"></script>
 		<script src="/controller/controller.api.js"></script>
 		<script type="module" crossorigin src="/assets/index-ewbgby90.js"></script>
-		<link rel="stylesheet" crossorigin href="/assets/index-cuh8d1r6.css.css">
+		<link rel="stylesheet" crossorigin href="/assets/index-cuh8d1r6.css.css" />
 	</head>
 
 	<body class="light-mode">
